@@ -80,14 +80,22 @@ fn run(
             return Ok(());
         }
 
-        let limit = limiter.get_limit();
-        let end = match buffer.char_indices().nth(limit) {
-            Some(idx_char) => idx_char.0,
-            None => buffer.len(),
-        };
-        let subs = &buffer[..end].trim_end();
+        let mut s = buffer.as_str().trim_end();
+        while s.len() != 0 {
+            let limit = limiter.get_limit();
+            let end = match s.char_indices().nth(limit) {
+                Some(idx_char) => idx_char.0,
+                None => s.len(),
+            };
+            let subs = &s[..end].trim_end();
+            writeln!(output, "{}", subs)?;
 
-        writeln!(output, "{}", subs)?;
+            if config.wrap {
+                s = &s[end..];
+            } else {
+                break;
+            }
+        }
     }
 }
 
