@@ -43,11 +43,8 @@ impl Limiter {
     }
 
     fn get_limit(&mut self) -> usize {
-        match self.config.characters {
-            Some(sz) => {
-                return sz;
-            }
-            None => {}
+        if let Some(sz) = self.config.characters {
+            return sz;
         }
 
         let default: usize = match (self.get_termsize)() {
