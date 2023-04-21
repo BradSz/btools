@@ -5,27 +5,27 @@ use clap::Parser;
 #[command(propagate_version = true)]
 struct Config {
     #[arg(short, long)]
-    /// wrap lines at boundary instead of truncating
+    /// Wrap lines at boundary instead of truncating
     wrap: bool,
 
     #[arg(short, long)]
-    /// chop after given number of characters instead of screen width
+    /// Chop after given number of characters instead of screen width
     characters: Option<usize>,
 
     #[arg(short, long)]
-    /// chop after the last of a given delimiter in a line, limited by terminal width (or `--characters`)
+    /// Chop after the last of a given delimiter in a line, limited by terminal width (or `--characters`)
     delimiter: Option<char>,
 
     #[arg(short, long)]
-    /// set chop boundary the greatest multiple available, limited by terminal width (or `--characters`)
+    /// Set chop boundary the greatest multiple available, limited by terminal width (or `--characters`)
     multiple: Option<usize>,
 
     #[arg(short, long)]
-    /// adjust the chop multiple boundary by a given offset
+    /// Adjust the chop multiple boundary by a given offset
     offset: Option<usize>,
 
     #[arg(short, long, default_value = "2.0")]
-    /// minimum interval to requery if terminal size has been adjusted; ignored when `--characters` is specified
+    /// Minimum interval to requery if terminal size has been adjusted; ignored when `--characters` is specified
     update: Option<f32>,
 }
 

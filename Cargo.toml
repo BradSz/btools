@@ -2,3 +2,7 @@
 members = [
     "chop",
 ]
+
+[profile.release]
+panic = "abort"
+strip = true
