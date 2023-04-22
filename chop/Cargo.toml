@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 clap = { version = "4.2.4", features = ["derive"] }
 termsize = "0.1.6"
+unicode-width = "0.1.10"

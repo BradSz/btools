@@ -77,7 +77,7 @@ impl Limiter {
     }
 }
 
-fn get_delimited_end(s: &str, limit: usize, delim: char) -> usize {
+fn get_end(s: &str, limit: usize, delim: Option<char>) -> usize {
     use std::cmp::min;
 
     let s_len = s.len();
@@ -87,23 +87,20 @@ fn get_delimited_end(s: &str, limit: usize, delim: char) -> usize {
     }
 
     let mut trial = min(limit, s_len); // default if no delimiter found
-    for (col, (c_idx, c_val)) in s.char_indices().enumerate() {
-        if c_val == delim {
-            trial = c_idx;
+    let mut col: usize = 0;
+    for (c_idx, c_val) in s.char_indices() {
+        col += unicode_width::UnicodeWidthChar::width(c_val).unwrap_or(1);
+
+        if col > limit {
+            break; // break before updating trial, so wide characters are pushed over
         }
-        if col >= limit {
-            break;
+
+        if c_val == delim.unwrap_or(c_val) {
+            trial = c_idx;
         }
     }
 
     min(s_len, trial + 1)
-}
-
-fn get_end(s: &str, limit: usize) -> usize {
-    match s.char_indices().nth(limit) {
-        Some(idx_char) => idx_char.0,
-        None => s.len(),
-    }
 }
 
 fn run(
@@ -126,10 +123,7 @@ fn run(
         let mut s = buffer.as_str().trim_end();
         while s.len() != 0 {
             let limit = limiter.get_limit();
-            let end = match config.delimiter {
-                Some(delim) => get_delimited_end(s, limit, delim),
-                None => get_end(s, limit),
-            };
+            let end = get_end(s, limit, config.delimiter);
             let subs = &s[..end];
             if let Err(e) = writeln!(output, "{}", subs) {
                 match e.kind() {
@@ -428,11 +422,38 @@ mod tests {
     //     todo!();
     //     // "🌈";
     // }
-    // #[test]
-    // fn test_non_ascii_unicode_wide() {
-    //     todo!();
-    //     // "🌈";
-    // }
+
+    #[test]
+    fn test_non_ascii_unicode_wide() {
+        let mut config = Config::default();
+        let mut limiter = Limiter {
+            config: config,
+            get_termsize: get_termsize_30,
+        };
+
+        let c = '🌈';
+        assert_eq!(2, unicode_width::UnicodeWidthChar::width(c).unwrap());
+
+        let input: String = format!(
+            "{}\n{}\n{}\n",
+            "[10char-🌈][10char-B][10char-C]",    // line 1
+            "[10char-🌈][10char-E][10char-🌈]", // line 2
+            "[10char-🌈]",                        // line 3
+        );
+
+        let exp: String = format!(
+            "{}\n{}\n{}\n",
+            "[10char-🌈][10char-B][10char-C", // line 1 (chopped two columns)
+            "[10char-🌈][10char-E][10char-",  // line 1 (chopped three columns)
+            "[10char-🌈]",                    // line 3
+        );
+
+        let mut output: Vec<u8> = Vec::new();
+        run(&config, &mut limiter, &mut input.as_bytes(), &mut output).unwrap();
+
+        let output_string = String::from_utf8(output).unwrap();
+        assert_eq!(exp, output_string, "\n{}\n", output_string);
+    }
 
     // #[test]
     // fn test_non_unicode_bytes() {
