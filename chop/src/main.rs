@@ -56,13 +56,14 @@ impl Limiter {
     }
 
     fn get_limit(&mut self) -> usize {
-        if let Some(sz) = self.config.characters {
-            return sz;
-        }
-
-        let default: usize = match (self.get_termsize)() {
-            Some(x) => x.cols as usize,
-            None => 80,
+        let default = {
+            match self.config.characters {
+                Some(sz) => sz,
+                None => match (self.get_termsize)() {
+                    Some(x) => x.cols as usize,
+                    None => 80,
+                },
+            }
         };
 
         match self.config.multiple {
@@ -114,23 +115,14 @@ fn run(
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
     use super::*;
-
-    fn c10(c: char) -> String {
-        String::from_str("[10char-x]")
-            .unwrap()
-            .replace("x", c.to_string().as_str())
-    }
 
     fn get_termsize_10() -> Option<termsize::Size> {
         Some(termsize::Size { rows: 0, cols: 10 })
     }
 
-    #[test]
-    fn test_c10() {
-        assert_eq!("[10char-A]", c10('A').as_str());
+    fn get_termsize_30() -> Option<termsize::Size> {
+        Some(termsize::Size { rows: 0, cols: 30 })
     }
 
     #[test]
@@ -141,25 +133,142 @@ mod tests {
             get_termsize: get_termsize_10,
         };
 
-        let input = format!(
-            "{}{}{}{}\n{}{}\n",
-            c10('A'),
-            c10('B'),
-            c10('C'),
-            c10('D'), // newline
-            c10('E'),
-            c10('F'), // newline
+        let input: String = format!(
+            "{}\n{}\n",
+            "[10char-A][10char-B][10char-C][10char-D]", // line 1
+            "[10char-E][10char-F]",                     // line 2
         );
         let exp: String = format!(
             "{}\n{}\n",
-            c10('A'), // newline
-            c10('E')  // newline
+            "[10char-A]", // line 1
+            "[10char-E]", // line 2
         );
 
         let mut output: Vec<u8> = Vec::new();
         run(&config, &mut limiter, &mut input.as_bytes(), &mut output).unwrap();
 
-        assert_eq!(exp.as_bytes(), output);
+        assert_eq!(exp.as_bytes(), output, "\n{}\n", input);
+    }
+
+    #[test]
+    fn test_wrap() {
+        let mut config = Config::default();
+        config.wrap = Some(true);
+        let mut limiter = Limiter {
+            config: config,
+            get_termsize: get_termsize_30,
+        };
+
+        let input: String = format!(
+            "{}\n{}\n",
+            "[10char-A][10char-B][10char-C][10char-D]", // line 1
+            "[10char-E][10char-F]",                     // line 2
+        );
+
+        let exp: String = format!(
+            "{}\n{}\n{}\n",
+            "[10char-A][10char-B][10char-C]", // line 1
+            "[10char-D]",                     // line 1
+            "[10char-E][10char-F]",           // line 2
+        );
+
+        let mut output: Vec<u8> = Vec::new();
+        run(&config, &mut limiter, &mut input.as_bytes(), &mut output).unwrap();
+
+        assert_eq!(exp.as_bytes(), output, "\n{}\n", input);
+    }
+
+    #[test]
+    fn test_wrap_chars() {
+        let mut config = Config::default();
+        config.wrap = Some(true);
+        config.characters = Some(20);
+        let mut limiter = Limiter {
+            config: config,
+            get_termsize: get_termsize_30,
+        };
+
+        let input: String = format!(
+            "{}\n{}\n",
+            "[10char-A][10char-B][10char-C][10char-D]", // line 1
+            "[10char-E][10char-F]",                     // line 2
+        );
+
+        let exp: String = format!(
+            "{}\n{}\n{}\n",
+            "[10char-A][10char-B]", // line 1
+            "[10char-C][10char-D]", // line 1
+            "[10char-E][10char-F]", // line 2
+        );
+
+        let mut output: Vec<u8> = Vec::new();
+        run(&config, &mut limiter, &mut input.as_bytes(), &mut output).unwrap();
+
+        assert_eq!(exp.as_bytes(), output, "\n{}\n", input);
+    }
+
+    #[test]
+    fn test_wrap_chars_multiple() {
+        let mut config = Config::default();
+        config.wrap = Some(true);
+        config.characters = Some(55);
+        config.multiple = Some(20);
+        let mut limiter = Limiter {
+            config: config,
+            get_termsize: get_termsize_30,
+        };
+
+        let input: String = format!(
+            "{}\n{}\n{}\n",
+            "[10char-A][10char-B][10char-C][10char-D][10char-E][10char-F]", // line 1
+            "[10char-G][10char-H][10char-I]",                               // line 2
+            "[10char-J][10char-K][10char-L][10char-M][10char-N]",           // line 3
+        );
+
+        let exp: String = format!(
+            "{}\n{}\n{}\n{}\n{}\n",
+            "[10char-A][10char-B][10char-C][10char-D]", // line 1
+            "[10char-E][10char-F]",                     // line 1
+            "[10char-G][10char-H][10char-I]",           // line 2
+            "[10char-J][10char-K][10char-L][10char-M]", // line 3
+            "[10char-N]",                               // line 3
+        );
+
+        let mut output: Vec<u8> = Vec::new();
+        run(&config, &mut limiter, &mut input.as_bytes(), &mut output).unwrap();
+
+        assert_eq!(exp.as_bytes(), output, "\n{}\n", input);
+    }
+
+    #[test]
+    fn test_default_chars_multiple() {
+        let mut config = Config::default();
+        config.wrap = Some(false);
+        config.characters = Some(55);
+        config.multiple = Some(20);
+        let mut limiter = Limiter {
+            config: config,
+            get_termsize: get_termsize_30,
+        };
+
+        let input: String = format!(
+            "{}\n{}\n{}\n",
+            "[10char-A][10char-B][10char-C][10char-D][10char-E][10char-F]", // line 1
+            "[10char-G][10char-H][10char-I]",                               // line 2
+            "[10char-J][10char-K][10char-L][10char-M][10char-N]",           // line 3
+        );
+
+        let exp: String = format!(
+            "{}\n{}\n{}\n",
+            "[10char-A][10char-B][10char-C][10char-D]", // line 1
+            "[10char-G][10char-H][10char-I]",           // line 2
+            "[10char-J][10char-K][10char-L][10char-M]", // line 3
+        );
+
+        let mut output: Vec<u8> = Vec::new();
+        run(&config, &mut limiter, &mut input.as_bytes(), &mut output).unwrap();
+
+        assert_eq!(exp.as_bytes(), output, "\n{}\n", input);
     }
 }
 
