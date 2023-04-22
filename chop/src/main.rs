@@ -77,6 +77,35 @@ impl Limiter {
     }
 }
 
+fn get_delimited_end(s: &str, limit: usize, delim: char) -> usize {
+    use std::cmp::min;
+
+    let s_len = s.len();
+
+    if s_len < limit {
+        return s_len; // already fits in allowed space
+    }
+
+    let mut trial = min(limit, s_len); // default if no delimiter found
+    for (col, (c_idx, c_val)) in s.char_indices().enumerate() {
+        if c_val == delim {
+            trial = c_idx;
+        }
+        if col >= limit {
+            break;
+        }
+    }
+
+    min(s_len, trial + 1)
+}
+
+fn get_end(s: &str, limit: usize) -> usize {
+    match s.char_indices().nth(limit) {
+        Some(idx_char) => idx_char.0,
+        None => s.len(),
+    }
+}
+
 fn run(
     config: &Config,
     limiter: &mut Limiter,
@@ -98,27 +127,8 @@ fn run(
         while s.len() != 0 {
             let limit = limiter.get_limit();
             let end = match config.delimiter {
-                Some(c) => {
-                    let mut trial = std::cmp::min(limit, s.len()); // default if no delimiter found
-                    for (col, (c_idx, c_val)) in s.char_indices().enumerate() {
-                        if c_val == c {
-                            trial = c_idx;
-                        }
-                        if col >= limit {
-                            break;
-                        }
-                    }
-                    if s.len() < limit {
-                        s.len()
-                        // TODO: refactor into function
-                    } else {
-                        std::cmp::min(s.len(), trial + 1)
-                    }
-                }
-                None => match s.char_indices().nth(limit) {
-                    Some(idx_char) => idx_char.0,
-                    None => s.len(),
-                },
+                Some(delim) => get_delimited_end(s, limit, delim),
+                None => get_end(s, limit),
             };
             let subs = &s[..end];
             writeln!(output, "{}", subs)?;
