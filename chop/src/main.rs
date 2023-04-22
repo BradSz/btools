@@ -97,11 +97,30 @@ fn run(
         let mut s = buffer.as_str().trim_end();
         while s.len() != 0 {
             let limit = limiter.get_limit();
-            let end = match s.char_indices().nth(limit) {
-                Some(idx_char) => idx_char.0,
-                None => s.len(),
+            let end = match config.delimiter {
+                Some(c) => {
+                    let mut trial = std::cmp::min(limit, s.len()); // default if no delimiter found
+                    for (col, (c_idx, c_val)) in s.char_indices().enumerate() {
+                        if c_val == c {
+                            trial = c_idx;
+                        }
+                        if col >= limit {
+                            break;
+                        }
+                    }
+                    if s.len() < limit {
+                        s.len()
+                        // TODO: refactor into function
+                    } else {
+                        std::cmp::min(s.len(), trial + 1)
+                    }
+                }
+                None => match s.char_indices().nth(limit) {
+                    Some(idx_char) => idx_char.0,
+                    None => s.len(),
+                },
             };
-            let subs = &s[..end].trim_end();
+            let subs = &s[..end];
             writeln!(output, "{}", subs)?;
 
             if config.wrap.unwrap_or(false) {
@@ -126,7 +145,9 @@ mod tests {
     }
 
     #[test]
-    fn test_truncate_default() {
+    /// Verify that lines are chopped after terminal bounds,
+    /// assuming terminal is 10 columns wide.
+    fn test_default() {
         let config = Config::default();
         let mut limiter = Limiter {
             config: config,
@@ -147,10 +168,13 @@ mod tests {
         let mut output: Vec<u8> = Vec::new();
         run(&config, &mut limiter, &mut input.as_bytes(), &mut output).unwrap();
 
-        assert_eq!(exp.as_bytes(), output, "\n{}\n", input);
+        let output_string = String::from_utf8(output).unwrap();
+        assert_eq!(exp, output_string, "\n{}\n", output_string);
     }
 
     #[test]
+    /// Verify that lines are wrapped (and continued) at terminal bounds,
+    /// assuming terminal is 30 columns wide.
     fn test_wrap() {
         let mut config = Config::default();
         config.wrap = Some(true);
@@ -168,18 +192,53 @@ mod tests {
         let exp: String = format!(
             "{}\n{}\n{}\n",
             "[10char-A][10char-B][10char-C]", // line 1
-            "[10char-D]",                     // line 1
+            "[10char-D]",                     // line 1 (wrap)
             "[10char-E][10char-F]",           // line 2
         );
 
         let mut output: Vec<u8> = Vec::new();
         run(&config, &mut limiter, &mut input.as_bytes(), &mut output).unwrap();
 
-        assert_eq!(exp.as_bytes(), output, "\n{}\n", input);
+        let output_string = String::from_utf8(output).unwrap();
+        assert_eq!(exp, output_string, "\n{}\n", output_string);
     }
 
     #[test]
-    fn test_wrap_chars() {
+    /// Verify that supplying a `characters` option overrides terminal bounds
+    /// assuming characters is set larger than terminal size.
+    fn test_wrap_chars_when_larger() {
+        let mut config = Config::default();
+        config.wrap = Some(true);
+        config.characters = Some(20);
+        let mut limiter = Limiter {
+            config: config,
+            get_termsize: get_termsize_10,
+        };
+
+        let input: String = format!(
+            "{}\n{}\n",
+            "[10char-A][10char-B][10char-C][10char-D]", // line 1
+            "[10char-E][10char-F]",                     // line 2
+        );
+
+        let exp: String = format!(
+            "{}\n{}\n{}\n",
+            "[10char-A][10char-B]", // line 1
+            "[10char-C][10char-D]", // line 1 (wrap)
+            "[10char-E][10char-F]", // line 2
+        );
+
+        let mut output: Vec<u8> = Vec::new();
+        run(&config, &mut limiter, &mut input.as_bytes(), &mut output).unwrap();
+
+        let output_string = String::from_utf8(output).unwrap();
+        assert_eq!(exp, output_string, "\n{}\n", output_string);
+    }
+
+    #[test]
+    /// Verify that supplying a `characters` option overrides terminal bounds
+    /// assuming characters is set smaller than terminal size.
+    fn test_wrap_chars_when_smaller() {
         let mut config = Config::default();
         config.wrap = Some(true);
         config.characters = Some(20);
@@ -197,17 +256,20 @@ mod tests {
         let exp: String = format!(
             "{}\n{}\n{}\n",
             "[10char-A][10char-B]", // line 1
-            "[10char-C][10char-D]", // line 1
+            "[10char-C][10char-D]", // line 1 (wrap)
             "[10char-E][10char-F]", // line 2
         );
 
         let mut output: Vec<u8> = Vec::new();
         run(&config, &mut limiter, &mut input.as_bytes(), &mut output).unwrap();
 
-        assert_eq!(exp.as_bytes(), output, "\n{}\n", input);
+        let output_string = String::from_utf8(output).unwrap();
+        assert_eq!(exp, output_string, "\n{}\n", output_string);
     }
 
     #[test]
+    /// Verify that supplying a `multiple` flag will wrap at the greatest
+    /// multiple that is strictly less than the specified column limit.
     fn test_wrap_chars_multiple() {
         let mut config = Config::default();
         config.wrap = Some(true);
@@ -228,16 +290,51 @@ mod tests {
         let exp: String = format!(
             "{}\n{}\n{}\n{}\n{}\n",
             "[10char-A][10char-B][10char-C][10char-D]", // line 1
-            "[10char-E][10char-F]",                     // line 1
+            "[10char-E][10char-F]",                     // line 1 (wrap)
             "[10char-G][10char-H][10char-I]",           // line 2
             "[10char-J][10char-K][10char-L][10char-M]", // line 3
-            "[10char-N]",                               // line 3
+            "[10char-N]",                               // line 3 (wrap)
         );
 
         let mut output: Vec<u8> = Vec::new();
         run(&config, &mut limiter, &mut input.as_bytes(), &mut output).unwrap();
 
-        assert_eq!(exp.as_bytes(), output, "\n{}\n", input);
+        let output_string = String::from_utf8(output).unwrap();
+        assert_eq!(exp, output_string, "\n{}\n", output_string);
+    }
+
+    #[test]
+    fn test_wrap_chars_multiple_offset() {
+        let mut config = Config::default();
+        config.wrap = Some(true);
+        config.characters = Some(55);
+        config.multiple = Some(20);
+        config.offset = Some(10);
+        let mut limiter = Limiter {
+            config: config,
+            get_termsize: get_termsize_30,
+        };
+
+        let input: String = format!(
+            "{}\n{}\n{}\n",
+            "[10char-A][10char-B][10char-C][10char-D][10char-E][10char-F]", // line 1
+            "[10char-G][10char-H][10char-I]",                               // line 2
+            "[10char-J][10char-K][10char-L][10char-M][10char-N]",           // line 3
+        );
+
+        let exp: String = format!(
+            "{}\n{}\n{}\n{}\n",
+            "[10char-A][10char-B][10char-C][10char-D][10char-E]", // line 1
+            "[10char-F]",                                         // line 1 (wrap)
+            "[10char-G][10char-H][10char-I]",                     // line 2
+            "[10char-J][10char-K][10char-L][10char-M][10char-N]", // line 3
+        );
+
+        let mut output: Vec<u8> = Vec::new();
+        run(&config, &mut limiter, &mut input.as_bytes(), &mut output).unwrap();
+
+        let output_string = String::from_utf8(output).unwrap();
+        assert_eq!(exp, output_string, "\n{}\n", output_string);
     }
 
     #[test]
@@ -268,8 +365,60 @@ mod tests {
         let mut output: Vec<u8> = Vec::new();
         run(&config, &mut limiter, &mut input.as_bytes(), &mut output).unwrap();
 
-        assert_eq!(exp.as_bytes(), output, "\n{}\n", input);
+        let output_string = String::from_utf8(output).unwrap();
+        assert_eq!(exp, output_string);
     }
+
+    #[test]
+    fn test_wrap_delimiter() {
+        let mut config = Config::default();
+        config.wrap = Some(true);
+        config.delimiter = Some('-');
+        let mut limiter = Limiter {
+            config: config,
+            get_termsize: get_termsize_30,
+        };
+
+        let input: String = format!(
+            "{}\n{}\n{}\n",
+            "[10char-A][10char-B][10char-C][10char-D][10char-E][10char-F]", // line 1
+            "[10char-G][10char-H][10char-I]",                               // line 2
+            "[10char-J][10char-K][10char-L][10char-M][10char-N]",           // line 3
+        );
+
+        let exp: String = format!(
+            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
+            "[10char-A][10char-B][10char-",   // line 1
+            "C][10char-D][10char-E][10char-", // line 1 (wrap)
+            "F]",                             // line 1 (wrap)
+            "[10char-G][10char-H][10char-",   // line 2
+            "I]",                             // line 2 (wrap)
+            "[10char-J][10char-K][10char-",   // line 3
+            "L][10char-M][10char-N]",         // line 3 (wrap)
+        );
+
+        let mut output: Vec<u8> = Vec::new();
+        run(&config, &mut limiter, &mut input.as_bytes(), &mut output).unwrap();
+
+        let output_string = String::from_utf8(output).unwrap();
+        assert_eq!(exp, output_string, "\n{}\n", output_string);
+    }
+
+    // #[test]
+    // fn test_non_ascii_unicode_narrow() {
+    //     todo!();
+    //     // "🌈";
+    // }
+    // #[test]
+    // fn test_non_ascii_unicode_wide() {
+    //     todo!();
+    //     // "🌈";
+    // }
+
+    // #[test]
+    // fn test_non_unicode_bytes() {
+    //     todo!();
+    // }
 }
 
 fn main() {
