@@ -1,6 +1,10 @@
 # btools
 Home grown development tools
 
+# License
+This is released under MIT license. I may in the future do a joint release MIT and Apache2, but I have to
+research the ramifications first.
+
 # Rationale
 This is a set of development tools that I have written and/or rewritten on various projects over the years.
 This repository serves as an attempt to create the best versions of those tools, compiled and unit tested.
