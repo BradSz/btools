@@ -3,6 +3,7 @@ use clap::Parser;
 #[derive(Parser, Debug, Clone, Copy)]
 #[command(author, version, about, long_about = None)]
 #[command(propagate_version = true)]
+#[derive(Default)]
 struct Config {
     #[arg(short, long)]
     /// Wrap lines at boundary instead of truncating
@@ -27,19 +28,6 @@ struct Config {
     #[arg(short, long, default_value = "2.0")]
     /// Minimum interval to requery if terminal size has been adjusted; ignored when `--characters` is specified
     update: Option<f32>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            wrap: Default::default(),
-            characters: Default::default(),
-            delimiter: Default::default(),
-            multiple: Default::default(),
-            offset: Default::default(),
-            update: Default::default(),
-        }
-    }
 }
 
 struct Limiter {
@@ -121,7 +109,7 @@ fn run(
         }
 
         let mut s = buffer.as_str().trim_end();
-        while s.len() != 0 {
+        while !s.is_empty() {
             let limit = limiter.get_limit();
             let end = get_end(s, limit, config.delimiter);
             let subs = &s[..end];
@@ -163,7 +151,7 @@ mod tests {
     fn test_default() {
         let config = Config::default();
         let mut limiter = Limiter {
-            config: config,
+            config,
             get_termsize: get_termsize_10,
         };
 
@@ -189,10 +177,12 @@ mod tests {
     /// Verify that lines are wrapped (and continued) at terminal bounds,
     /// assuming terminal is 30 columns wide.
     fn test_wrap() {
-        let mut config = Config::default();
-        config.wrap = Some(true);
+        let config = Config {
+            wrap: Some(true),
+            ..Default::default()
+        };
         let mut limiter = Limiter {
-            config: config,
+            config,
             get_termsize: get_termsize_30,
         };
 
@@ -220,11 +210,13 @@ mod tests {
     /// Verify that supplying a `characters` option overrides terminal bounds
     /// assuming characters is set larger than terminal size.
     fn test_wrap_chars_when_larger() {
-        let mut config = Config::default();
-        config.wrap = Some(true);
-        config.characters = Some(20);
+        let config = Config {
+            wrap: Some(true),
+            characters: Some(20),
+            ..Default::default()
+        };
         let mut limiter = Limiter {
-            config: config,
+            config,
             get_termsize: get_termsize_10,
         };
 
@@ -252,11 +244,13 @@ mod tests {
     /// Verify that supplying a `characters` option overrides terminal bounds
     /// assuming characters is set smaller than terminal size.
     fn test_wrap_chars_when_smaller() {
-        let mut config = Config::default();
-        config.wrap = Some(true);
-        config.characters = Some(20);
+        let config = Config {
+            wrap: Some(true),
+            characters: Some(20),
+            ..Default::default()
+        };
         let mut limiter = Limiter {
-            config: config,
+            config,
             get_termsize: get_termsize_30,
         };
 
@@ -284,12 +278,14 @@ mod tests {
     /// Verify that supplying a `multiple` flag will wrap at the greatest
     /// multiple that is strictly less than the specified column limit.
     fn test_wrap_chars_multiple() {
-        let mut config = Config::default();
-        config.wrap = Some(true);
-        config.characters = Some(55);
-        config.multiple = Some(20);
+        let config = Config {
+            wrap: Some(true),
+            characters: Some(55),
+            multiple: Some(20),
+            ..Default::default()
+        };
         let mut limiter = Limiter {
-            config: config,
+            config,
             get_termsize: get_termsize_30,
         };
 
@@ -318,13 +314,15 @@ mod tests {
 
     #[test]
     fn test_wrap_chars_multiple_offset() {
-        let mut config = Config::default();
-        config.wrap = Some(true);
-        config.characters = Some(55);
-        config.multiple = Some(20);
-        config.offset = Some(10);
+        let config = Config {
+            wrap: Some(true),
+            characters: Some(55),
+            multiple: Some(20),
+            offset: Some(10),
+            ..Default::default()
+        };
         let mut limiter = Limiter {
-            config: config,
+            config,
             get_termsize: get_termsize_30,
         };
 
@@ -352,12 +350,14 @@ mod tests {
 
     #[test]
     fn test_default_chars_multiple() {
-        let mut config = Config::default();
-        config.wrap = Some(false);
-        config.characters = Some(55);
-        config.multiple = Some(20);
+        let config = Config {
+            wrap: Some(false),
+            characters: Some(55),
+            multiple: Some(20),
+            ..Default::default()
+        };
         let mut limiter = Limiter {
-            config: config,
+            config,
             get_termsize: get_termsize_30,
         };
 
@@ -384,11 +384,13 @@ mod tests {
 
     #[test]
     fn test_wrap_delimiter() {
-        let mut config = Config::default();
-        config.wrap = Some(true);
-        config.delimiter = Some('-');
+        let config = Config {
+            wrap: Some(true),
+            delimiter: Some('-'),
+            ..Default::default()
+        };
         let mut limiter = Limiter {
-            config: config,
+            config,
             get_termsize: get_termsize_30,
         };
 
@@ -425,9 +427,9 @@ mod tests {
 
     #[test]
     fn test_non_ascii_unicode_wide() {
-        let mut config = Config::default();
+        let config = Config::default();
         let mut limiter = Limiter {
-            config: config,
+            config,
             get_termsize: get_termsize_30,
         };
 
