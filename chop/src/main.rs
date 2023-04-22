@@ -131,7 +131,16 @@ fn run(
                 None => get_end(s, limit),
             };
             let subs = &s[..end];
-            writeln!(output, "{}", subs)?;
+            if let Err(e) = writeln!(output, "{}", subs) {
+                match e.kind() {
+                    std::io::ErrorKind::BrokenPipe => {
+                        return Ok(());
+                    }
+                    _ => {
+                        return Err(e);
+                    }
+                }
+            }
 
             if config.wrap.unwrap_or(false) {
                 s = &s[end..];
