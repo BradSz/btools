@@ -1,24 +1,22 @@
 use clap::Parser;
 
-#[derive(Parser, Debug, Clone, Copy)]
-#[command(author, version, about, long_about = None)]
-#[command(propagate_version = true)]
-#[derive(Default)]
+#[derive(Parser, Default, Debug, Clone, Copy)]
+#[command(author, version, about, long_about = None, propagate_version = true)]
 struct Config {
     #[arg(short, long)]
     /// Wrap lines at boundary instead of truncating
     wrap: Option<bool>,
 
     #[arg(short, long)]
-    /// Chop after given number of characters instead of screen width
-    characters: Option<usize>,
+    /// Chop after given number of columns instead of screen width
+    columns: Option<usize>,
 
     #[arg(short, long)]
-    /// Chop after the last of a given delimiter in a line, limited by terminal width (or `--characters`)
+    /// Chop after the last of a given delimiter in a line, limited by terminal width (or `--columns`)
     delimiter: Option<char>,
 
     #[arg(short, long)]
-    /// Set chop boundary the greatest multiple available, limited by terminal width (or `--characters`)
+    /// Set chop boundary the greatest multiple available, limited by terminal width (or `--columns`)
     multiple: Option<usize>,
 
     #[arg(short, long)]
@@ -26,7 +24,7 @@ struct Config {
     offset: Option<usize>,
 
     #[arg(short, long, default_value = "2.0")]
-    /// Minimum interval to requery if terminal size has been adjusted; ignored when `--characters` is specified
+    /// Minimum interval to requery if terminal size has been adjusted; ignored when `--columns` is specified
     update: Option<f32>,
 }
 
@@ -45,7 +43,7 @@ impl Limiter {
 
     fn get_limit(&mut self) -> usize {
         let default = {
-            match self.config.characters {
+            match self.config.columns {
                 Some(sz) => sz,
                 None => match (self.get_termsize)() {
                     Some(x) => x.cols as usize,
@@ -207,12 +205,12 @@ mod tests {
     }
 
     #[test]
-    /// Verify that supplying a `characters` option overrides terminal bounds
-    /// assuming characters is set larger than terminal size.
+    /// Verify that supplying a `columns` option overrides terminal bounds
+    /// assuming columns is set larger than terminal size.
     fn test_wrap_chars_when_larger() {
         let config = Config {
             wrap: Some(true),
-            characters: Some(20),
+            columns: Some(20),
             ..Default::default()
         };
         let mut limiter = Limiter {
@@ -241,12 +239,12 @@ mod tests {
     }
 
     #[test]
-    /// Verify that supplying a `characters` option overrides terminal bounds
-    /// assuming characters is set smaller than terminal size.
+    /// Verify that supplying a `columns` option overrides terminal bounds
+    /// assuming columns is set smaller than terminal size.
     fn test_wrap_chars_when_smaller() {
         let config = Config {
             wrap: Some(true),
-            characters: Some(20),
+            columns: Some(20),
             ..Default::default()
         };
         let mut limiter = Limiter {
@@ -280,7 +278,7 @@ mod tests {
     fn test_wrap_chars_multiple() {
         let config = Config {
             wrap: Some(true),
-            characters: Some(55),
+            columns: Some(55),
             multiple: Some(20),
             ..Default::default()
         };
@@ -316,7 +314,7 @@ mod tests {
     fn test_wrap_chars_multiple_offset() {
         let config = Config {
             wrap: Some(true),
-            characters: Some(55),
+            columns: Some(55),
             multiple: Some(20),
             offset: Some(10),
             ..Default::default()
@@ -352,7 +350,7 @@ mod tests {
     fn test_default_chars_multiple() {
         let config = Config {
             wrap: Some(false),
-            characters: Some(55),
+            columns: Some(55),
             multiple: Some(20),
             ..Default::default()
         };
