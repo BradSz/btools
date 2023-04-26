@@ -435,16 +435,18 @@ mod tests {
         assert_eq!(2, unicode_width::UnicodeWidthChar::width(c).unwrap());
 
         let input: String = format!(
-            "{}\n{}\n{}\n",
-            "[10char-🌈][10char-B][10char-C]",    // line 1
-            "[10char-🌈][10char-E][10char-🌈]", // line 2
-            "[10char-🌈]",                        // line 3
+            "{}\n{}\n{}\n{}\n",
+            "[10char-🌈][10char-B][10char-C]",    // line 1 (wide)
+            "[10char-🌈][10char-E][10char-🌈]", // line 2 (wide)
+            "[10-a̐éö̲-🌈][10-a̐éö̲-E][10-a̐éö̲-🌈]", // line 3 (wide and graphemes)
+            "[10char-🌈]",                        // line 4 (wide)
         );
 
         let exp: String = format!(
-            "{}\n{}\n{}\n",
+            "{}\n{}\n{}\n{}\n",
             "[10char-🌈][10char-B][10char-C", // line 1 (chopped two columns)
-            "[10char-🌈][10char-E][10char-",  // line 1 (chopped three columns)
+            "[10char-🌈][10char-E][10char-",  // line 2 (chopped three columns)
+            "[10-a̐éö̲-🌈][10-a̐éö̲-E][10-a̐éö̲-", // line 2 (chopped with graphemes)
             "[10char-🌈]",                    // line 3
         );
 
