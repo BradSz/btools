@@ -1,6 +1,9 @@
 use clap::Parser;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
-#[derive(Parser, Default, Debug, Clone, Copy)]
+#[derive(Parser, Default, Debug, Clone)]
 #[command(author, version, about, long_about = None, propagate_version = true)]
 struct Config {
     #[arg(short, long)]
@@ -13,7 +16,7 @@ struct Config {
 
     #[arg(short, long)]
     /// Chop after the last of a given delimiter in a line, limited by terminal width (or `--columns`)
-    delimiter: Option<char>,
+    delimiter: Option<String>,
 
     #[arg(short, long)]
     /// Set chop boundary the greatest multiple available, limited by terminal width (or `--columns`)
@@ -28,16 +31,52 @@ struct Config {
     update: Option<f32>,
 }
 
+struct TimedCache {
+    value: usize,
+    prev_timestamp: SystemTime,
+    timeout: Duration,
+}
+impl TimedCache {
+    fn new(timeout: Duration) -> Self {
+        Self {
+            value: 0,
+            prev_timestamp: UNIX_EPOCH,
+            timeout,
+        }
+    }
+
+    fn get(&self) -> Option<usize> {
+        let t = SystemTime::now();
+        match t.duration_since(self.prev_timestamp) {
+            Ok(delta) => {
+                if delta <= self.timeout {
+                    Some(self.value)
+                } else {
+                    None
+                }
+            }
+            Err(_) => None,
+        }
+    }
+    fn set(&mut self, value: usize) {
+        self.value = value;
+        self.prev_timestamp = SystemTime::now();
+    }
+}
+
 struct Limiter {
     config: Config,
     get_termsize: fn() -> Option<termsize::Size>,
+    cache: TimedCache,
 }
 
 impl Limiter {
-    fn new(config: &Config) -> Self {
+    fn new(config: Config) -> Self {
+        let nanos = (config.update.unwrap_or(2.0) / 1e9) as u64;
         Limiter {
-            config: *config,
+            config: config,
             get_termsize: termsize::get,
+            cache: TimedCache::new(Duration::from_nanos(nanos)),
         }
     }
 
@@ -45,9 +84,16 @@ impl Limiter {
         let default = {
             match self.config.columns {
                 Some(sz) => sz,
-                None => match (self.get_termsize)() {
-                    Some(x) => x.cols as usize,
-                    None => 80,
+                None => match self.cache.get() {
+                    Some(sz) => sz,
+                    None => match (self.get_termsize)() {
+                        Some(x) => {
+                            let cols = x.cols as usize;
+                            self.cache.set(cols);
+                            cols
+                        }
+                        None => 80,
+                    },
                 },
             }
         };
@@ -63,7 +109,7 @@ impl Limiter {
     }
 }
 
-fn get_end(s: &str, limit: usize, delim: Option<char>) -> usize {
+fn get_end(s: &str, limit: usize, delim: &Option<String>) -> usize {
     use std::cmp::min;
 
     let s_len = s.len();
@@ -74,19 +120,22 @@ fn get_end(s: &str, limit: usize, delim: Option<char>) -> usize {
 
     let mut trial = min(limit, s_len); // default if no delimiter found
     let mut col: usize = 0;
-    for (c_idx, c_val) in s.char_indices() {
-        col += unicode_width::UnicodeWidthChar::width(c_val).unwrap_or(1);
 
+    for (c_idx, c_val) in s.grapheme_indices(true) {
         if col > limit {
             break; // break before updating trial, so wide characters are pushed over
         }
 
-        if c_val == delim.unwrap_or(c_val) {
-            trial = c_idx;
+        col += c_val.width();
+
+        if let Some(ref d) = delim {
+            if c_val == d {
+                trial = c_idx;
+            }
         }
     }
 
-    min(s_len, trial + 1)
+    min(s_len, trial)
 }
 
 fn run(
@@ -109,7 +158,7 @@ fn run(
         let mut s = buffer.as_str().trim_end();
         while !s.is_empty() {
             let limit = limiter.get_limit();
-            let end = get_end(s, limit, config.delimiter);
+            let end = get_end(s, limit, &config.delimiter);
             let subs = &s[..end];
             if let Err(e) = writeln!(output, "{}", subs) {
                 match e.kind() {
@@ -122,11 +171,29 @@ fn run(
                 }
             }
 
+            output.flush()?;
+
             if config.wrap.unwrap_or(false) {
                 s = &s[end..];
             } else {
                 break;
             }
+        }
+    }
+}
+
+fn main() {
+    let config = Config::parse();
+
+    match run(
+        &config,
+        &mut Limiter::new(config.clone()),
+        &mut std::io::stdin().lock(),
+        &mut std::io::stdout().lock(),
+    ) {
+        Ok(_) => {}
+        Err(_) => {
+            println!("failure");
         }
     }
 }
@@ -149,8 +216,9 @@ mod tests {
     fn test_default() {
         let config = Config::default();
         let mut limiter = Limiter {
-            config,
+            config: config.clone(),
             get_termsize: get_termsize_10,
+            cache: TimedCache::new(Duration::from_secs(1)),
         };
 
         let input: String = format!(
@@ -180,8 +248,9 @@ mod tests {
             ..Default::default()
         };
         let mut limiter = Limiter {
-            config,
+            config: config.clone(),
             get_termsize: get_termsize_30,
+            cache: TimedCache::new(Duration::from_secs(1)),
         };
 
         let input: String = format!(
@@ -214,8 +283,9 @@ mod tests {
             ..Default::default()
         };
         let mut limiter = Limiter {
-            config,
+            config: config.clone(),
             get_termsize: get_termsize_10,
+            cache: TimedCache::new(Duration::from_secs(1)),
         };
 
         let input: String = format!(
@@ -248,8 +318,9 @@ mod tests {
             ..Default::default()
         };
         let mut limiter = Limiter {
-            config,
+            config: config.clone(),
             get_termsize: get_termsize_30,
+            cache: TimedCache::new(Duration::from_secs(1)),
         };
 
         let input: String = format!(
@@ -283,8 +354,9 @@ mod tests {
             ..Default::default()
         };
         let mut limiter = Limiter {
-            config,
+            config: config.clone(),
             get_termsize: get_termsize_30,
+            cache: TimedCache::new(Duration::from_secs(1)),
         };
 
         let input: String = format!(
@@ -320,8 +392,9 @@ mod tests {
             ..Default::default()
         };
         let mut limiter = Limiter {
-            config,
+            config: config.clone(),
             get_termsize: get_termsize_30,
+            cache: TimedCache::new(Duration::from_secs(1)),
         };
 
         let input: String = format!(
@@ -355,8 +428,9 @@ mod tests {
             ..Default::default()
         };
         let mut limiter = Limiter {
-            config,
+            config: config.clone(),
             get_termsize: get_termsize_30,
+            cache: TimedCache::new(Duration::from_secs(1)),
         };
 
         let input: String = format!(
@@ -384,12 +458,13 @@ mod tests {
     fn test_wrap_delimiter() {
         let config = Config {
             wrap: Some(true),
-            delimiter: Some('-'),
+            delimiter: Some("-".to_string()),
             ..Default::default()
         };
         let mut limiter = Limiter {
-            config,
+            config: config.clone(),
             get_termsize: get_termsize_30,
+            cache: TimedCache::new(Duration::from_secs(1)),
         };
 
         let input: String = format!(
@@ -417,37 +492,34 @@ mod tests {
         assert_eq!(exp, output_string, "\n{}\n", output_string);
     }
 
-    // #[test]
-    // fn test_non_ascii_unicode_narrow() {
-    //     todo!();
-    //     // "🌈";
-    // }
-
     #[test]
     fn test_non_ascii_unicode_wide() {
         let config = Config::default();
         let mut limiter = Limiter {
-            config,
+            config: config.clone(),
             get_termsize: get_termsize_30,
+            cache: TimedCache::new(Duration::from_secs(1)),
         };
 
         let c = '🌈';
         assert_eq!(2, unicode_width::UnicodeWidthChar::width(c).unwrap());
 
         let input: String = format!(
-            "{}\n{}\n{}\n{}\n",
+            "{}\n{}\n{}\n{}\n{}\n",
             "[10char-🌈][10char-B][10char-C]",    // line 1 (wide)
             "[10char-🌈][10char-E][10char-🌈]", // line 2 (wide)
             "[10-a̐éö̲-🌈][10-a̐éö̲-E][10-a̐éö̲-🌈]", // line 3 (wide and graphemes)
             "[10char-🌈]",                        // line 4 (wide)
+            "a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐", // line 5 (wide and graphemes)
         );
 
         let exp: String = format!(
-            "{}\n{}\n{}\n{}\n",
+            "{}\n{}\n{}\n{}\n{}\n",
             "[10char-🌈][10char-B][10char-C", // line 1 (chopped two columns)
             "[10char-🌈][10char-E][10char-",  // line 2 (chopped three columns)
-            "[10-a̐éö̲-🌈][10-a̐éö̲-E][10-a̐éö̲-", // line 2 (chopped with graphemes)
-            "[10char-🌈]",                    // line 3
+            "[10-a̐éö̲-🌈][10-a̐éö̲-E][10-a̐éö̲-", // line 3 (chopped three columns (still))
+            "[10char-🌈]",                    // line 4
+            "a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐a̐", // line 5 (wide and graphemes)
         );
 
         let mut output: Vec<u8> = Vec::new();
@@ -455,26 +527,5 @@ mod tests {
 
         let output_string = String::from_utf8(output).unwrap();
         assert_eq!(exp, output_string, "\n{}\n", output_string);
-    }
-
-    // #[test]
-    // fn test_non_unicode_bytes() {
-    //     todo!();
-    // }
-}
-
-fn main() {
-    let config = Config::parse();
-
-    match run(
-        &config,
-        &mut Limiter::new(&config),
-        &mut std::io::stdin().lock(),
-        &mut std::io::stdout().lock(),
-    ) {
-        Ok(_) => {}
-        Err(_) => {
-            println!("failure");
-        }
     }
 }

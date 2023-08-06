@@ -9,6 +9,7 @@ fix:
 
 .PHONY: install
 install:
+	@cargo install --path ./binspect
 	@cargo install --path ./chop
 
 .PHONY: test

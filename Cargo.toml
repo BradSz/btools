@@ -1,6 +1,8 @@
 [workspace]
 members = [
+    "binspect",
     "chop",
+    "git-watch",
 ]
 
 [profile.release]
