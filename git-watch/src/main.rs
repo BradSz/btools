@@ -1,10 +1,8 @@
 use anyhow::Result;
 use clap::Parser;
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     io::Write,
-    path::Path,
-    process::{ExitCode, ExitStatus},
     time::{Duration, Instant},
 };
 
@@ -55,7 +53,7 @@ impl Cache {
     }
 
     fn is_actionable(&mut self, path: &str) -> bool {
-        return !self.is_ignored(path);
+        !self.is_ignored(path)
     }
 
     fn is_ignored(&mut self, path: &str) -> bool {
@@ -112,7 +110,7 @@ impl Cache {
             path
         );
 
-        return is_ignored;
+        is_ignored
     }
 }
 
