@@ -1,6 +1,12 @@
 use anyhow::Result;
 use clap::Parser;
-use std::io::Write;
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    io::Write,
+    path::Path,
+    process::{ExitCode, ExitStatus},
+    time::{Duration, Instant},
+};
 
 #[derive(Parser, Default, Debug, Clone)]
 #[command(author, version, about, long_about=None, propagate_version=true)]
@@ -29,6 +35,87 @@ struct Config {
     verbose: bool,
 }
 
+struct Cache {
+    config: Config,
+    filenames: HashMap<String, bool>,
+    eviction_times: VecDeque<CacheMeta>,
+}
+struct CacheMeta {
+    eviction_time: Instant,
+    path: String,
+}
+
+impl Cache {
+    fn new(config: Config) -> Self {
+        Self {
+            config,
+            filenames: HashMap::new(),
+            eviction_times: VecDeque::new(),
+        }
+    }
+
+    fn is_actionable(&mut self, path: &str) -> bool {
+        return !self.is_ignored(path);
+    }
+
+    fn is_ignored(&mut self, path: &str) -> bool {
+        let now = Instant::now();
+
+        // evict cache entries when tracking too many
+        while self.eviction_times.len() >= self.config.size {
+            if let Some(cache_meta) = self.eviction_times.pop_front() {
+                self.filenames.remove(&cache_meta.path);
+            }
+        }
+
+        // evict cache entries when entries are deemed too old
+        loop {
+            if let Some(cache_meta) = self.eviction_times.front() {
+                if cache_meta.eviction_time < now {
+                    self.filenames.remove(&cache_meta.path);
+                    let evicted = self.eviction_times.pop_front().unwrap();
+                    log::debug!("Stale cache evicted for file \"{}\"", evicted.path);
+                    continue; // potentially more to evict
+                }
+            }
+            break; // nothing more to evict
+        }
+
+        // use prior cache value
+        if let Some(&is_ignored) = self.filenames.get(path) {
+            log::debug!(
+                "Using cached result {:?} for file {:?}",
+                if is_ignored { "ignored" } else { "actionable" },
+                path
+            );
+            return is_ignored;
+        }
+
+        // determine if the file is tracked (errors mean not ignored)
+        let git_output = std::process::Command::new("git")
+            .args(["check-ignore", "--quiet", path])
+            .output()
+            .expect("failed to execute git");
+
+        let is_ignored = git_output.status.success();
+
+        // cache results
+        self.filenames.insert(path.to_string(), is_ignored);
+        self.eviction_times.push_back(CacheMeta {
+            eviction_time: now + Duration::from_secs_f32(self.config.age),
+            path: path.to_string(),
+        });
+
+        log::debug!(
+            "Determined new result {:?} for file {:?}",
+            if is_ignored { "ignored" } else { "actionable" },
+            path
+        );
+
+        return is_ignored;
+    }
+}
+
 fn init_logger(config: &Config) {
     let level = if config.verbose {
         log::LevelFilter::Debug
@@ -49,7 +136,30 @@ fn main() -> Result<()> {
     let config = Config::parse();
     init_logger(&config);
 
-    log::info!("{:#?}", config);
+    log::debug!("{:#?}", config);
+
+    let root = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .expect("unable to determine git root")
+        .stdout;
+    let root = String::from_utf8(root).expect("unable to parse root path");
+    let root = root.trim();
+
+    log::info!("Running with root: {}", root);
+
+    let mut cache = Cache::new(config);
+    let fname = "Cargo.toml";
+    println!("Actionable {} : {}", fname, cache.is_actionable(fname));
+    println!("Actionable {} : {}", fname, cache.is_actionable(fname));
+    println!("Actionable {} : {}", fname, cache.is_actionable(fname));
+    println!("Actionable {} : {}", fname, cache.is_actionable(fname));
+
+    let fname = "../target/Cargo.toml";
+    println!("Actionable {} : {}", fname, cache.is_actionable(fname));
+    println!("Actionable {} : {}", fname, cache.is_actionable(fname));
+    println!("Actionable {} : {}", fname, cache.is_actionable(fname));
+    println!("Actionable {} : {}", fname, cache.is_actionable(fname));
 
     Ok(())
 }
