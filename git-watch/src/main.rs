@@ -10,7 +10,8 @@ use std::{
 #[command(author, version, about, long_about=None, propagate_version=true)]
 struct Config {
     /// Command(s) to execute
-    command: String,
+    #[clap(num_args = 1..)]
+    command: Vec<String>,
 
     #[arg(short = 'a', long, default_value = "30")]
     /// Age of cache to be periodically pruned, in seconds
@@ -136,6 +137,8 @@ fn main() -> Result<()> {
 
     log::debug!("{:#?}", config);
 
+    anyhow::ensure!(!config.command.is_empty(), "no command argument provided");
+
     let root = std::process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .output()
@@ -146,7 +149,7 @@ fn main() -> Result<()> {
 
     log::info!("Running with root: {}", root);
 
-    let mut cache = Cache::new(config);
+    let mut cache = Cache::new(config.clone());
     let fname = "Cargo.toml";
     println!("Actionable {} : {}", fname, cache.is_actionable(fname));
     println!("Actionable {} : {}", fname, cache.is_actionable(fname));
@@ -158,6 +161,22 @@ fn main() -> Result<()> {
     println!("Actionable {} : {}", fname, cache.is_actionable(fname));
     println!("Actionable {} : {}", fname, cache.is_actionable(fname));
     println!("Actionable {} : {}", fname, cache.is_actionable(fname));
+
+    // Quick test to execute the command
+    let user_command = std::process::Command::new(&config.command[0])
+        .args(&config.command[1..])
+        .status();
+
+    let status = match user_command {
+        Ok(s)=>s,
+        Err(_)=>{anyhow::bail!("command not found: {}", &config.command[0])}
+    };
+
+    if status.success() {
+        log::debug!("Command success: {:?}", config.command);
+    } else {
+        log::debug!("Command failure: {:?}", config.command);
+    }
 
     Ok(())
 }
