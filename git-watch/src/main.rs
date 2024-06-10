@@ -1,8 +1,12 @@
 use anyhow::Result;
 use clap::Parser;
+use notify::{RecursiveMode, Watcher};
 use std::{
     collections::{HashMap, VecDeque},
+    ffi::OsStr,
     io::Write,
+    path::PathBuf,
+    sync::{Arc, Condvar, Mutex, MutexGuard, WaitTimeoutResult},
     time::{Duration, Instant},
 };
 
@@ -16,6 +20,9 @@ struct Config {
     #[arg(short = 'a', long, default_value = "30")]
     /// Age of cache to be periodically pruned, in seconds
     age: f32,
+
+    #[arg(short = '1', long)]
+    oneshot: bool,
 
     #[arg(short = 'n', long, default_value = "1000")]
     /// Maximum number of elements to retain in cache
@@ -36,12 +43,12 @@ struct Config {
 
 struct Cache {
     config: Config,
-    filenames: HashMap<String, bool>,
+    filenames: HashMap<PathBuf, bool>,
     eviction_times: VecDeque<CacheMeta>,
 }
 struct CacheMeta {
     eviction_time: Instant,
-    path: String,
+    path: PathBuf,
 }
 
 impl Cache {
@@ -53,11 +60,11 @@ impl Cache {
         }
     }
 
-    fn is_actionable(&mut self, path: &str) -> bool {
+    fn is_actionable(&mut self, path: &PathBuf) -> bool {
         !self.is_ignored(path)
     }
 
-    fn is_ignored(&mut self, path: &str) -> bool {
+    fn is_ignored(&mut self, path: &PathBuf) -> bool {
         let now = Instant::now();
 
         // evict cache entries when tracking too many
@@ -73,7 +80,7 @@ impl Cache {
                 if cache_meta.eviction_time < now {
                     self.filenames.remove(&cache_meta.path);
                     let evicted = self.eviction_times.pop_front().unwrap();
-                    log::debug!("Stale cache evicted for file \"{}\"", evicted.path);
+                    log::debug!("Stale cache evicted for file {:?}", evicted.path);
                     continue; // potentially more to evict
                 }
             }
@@ -90,19 +97,23 @@ impl Cache {
             return is_ignored;
         }
 
-        // determine if the file is tracked (errors mean not ignored)
+        // determine if the file is trackable (error return code means not ignored)
         let git_output = std::process::Command::new("git")
-            .args(["check-ignore", "--quiet", path])
+            .args([
+                OsStr::new("check-ignore"),
+                OsStr::new("--quiet"),
+                path.as_os_str(),
+            ])
             .output()
             .expect("failed to execute git");
 
         let is_ignored = git_output.status.success();
 
         // cache results
-        self.filenames.insert(path.to_string(), is_ignored);
+        self.filenames.insert(path.clone(), is_ignored);
         self.eviction_times.push_back(CacheMeta {
             eviction_time: now + Duration::from_secs_f32(self.config.age),
-            path: path.to_string(),
+            path: path.clone(),
         });
 
         log::debug!(
@@ -131,6 +142,30 @@ fn init_logger(config: &Config) {
         .init();
 }
 
+fn run_command(config: &Config) -> Result<()> {
+    // Quick test to execute the command
+    let user_command = std::process::Command::new(&config.command[0])
+        .args(&config.command[1..])
+        .status();
+
+    let status = match user_command {
+        Ok(s) => s,
+        Err(_) => {
+            // Error if the command could not be found
+            anyhow::bail!("command not found: {}", &config.command[0])
+        }
+    };
+
+    if status.success() {
+        log::debug!("Command success: {:?}", config.command);
+    } else {
+        log::debug!("Command failure: {:?}", config.command);
+    }
+
+    // Success if command was found and run, regardless of return code
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let config = Config::parse();
     init_logger(&config);
@@ -138,6 +173,8 @@ fn main() -> Result<()> {
     log::debug!("{:#?}", config);
 
     anyhow::ensure!(!config.command.is_empty(), "no command argument provided");
+    // let work_queue = Arc::new(Mutex::new(VecDeque::new()));
+    let work_trigger = Arc::new((Mutex::new(0_usize), Condvar::new()));
 
     let root = std::process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
@@ -146,36 +183,75 @@ fn main() -> Result<()> {
         .stdout;
     let root = String::from_utf8(root).expect("unable to parse root path");
     let root = root.trim();
+    let root = std::path::Path::new(root);
 
-    log::info!("Running with root: {}", root);
+    log::info!("Running with root: {:?}", root);
 
     let mut cache = Cache::new(config.clone());
-    let fname = "Cargo.toml";
-    println!("Actionable {} : {}", fname, cache.is_actionable(fname));
-    println!("Actionable {} : {}", fname, cache.is_actionable(fname));
-    println!("Actionable {} : {}", fname, cache.is_actionable(fname));
-    println!("Actionable {} : {}", fname, cache.is_actionable(fname));
 
-    let fname = "../target/Cargo.toml";
-    println!("Actionable {} : {}", fname, cache.is_actionable(fname));
-    println!("Actionable {} : {}", fname, cache.is_actionable(fname));
-    println!("Actionable {} : {}", fname, cache.is_actionable(fname));
-    println!("Actionable {} : {}", fname, cache.is_actionable(fname));
+    // Automatically select the best implementation for your platform.
+    let work_trigger2 = Arc::clone(&work_trigger);
+    let mut watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
+        use notify::event::AccessKind;
+        use notify::event::AccessMode;
 
-    // Quick test to execute the command
-    let user_command = std::process::Command::new(&config.command[0])
-        .args(&config.command[1..])
-        .status();
+        use notify::EventKind;
 
-    let status = match user_command {
-        Ok(s)=>s,
-        Err(_)=>{anyhow::bail!("command not found: {}", &config.command[0])}
-    };
+        let mut monitored: bool = false;
 
-    if status.success() {
-        log::debug!("Command success: {:?}", config.command);
-    } else {
-        log::debug!("Command failure: {:?}", config.command);
+        if let Ok(event) = result {
+            if let EventKind::Access(access) = event.kind {
+                if let AccessKind::Close(mode) = access {
+                    if let AccessMode::Write = mode {
+                        monitored = true;
+                    }
+                }
+            }
+
+            if monitored {
+                for path in event.paths.iter() {
+                    if cache.is_actionable(path) {
+                        (*work_trigger2.0.lock().unwrap()) += 1;
+                        work_trigger2.1.notify_one();
+                    }
+                }
+            }
+        }
+    })?;
+
+    // Add a path to be watched. All files and directories at that path and
+    // below will be monitored for changes.
+    watcher.watch(root, RecursiveMode::Recursive)?;
+
+    // skip top-level git directory
+    if watcher.unwatch(&root.join(".git")).is_err() {
+        log::warn!("top level \".git\" directory not found and not ignored");
+    }
+
+    let (lock, cond) = &*work_trigger;
+    let mut prev = 0_usize;
+    let mut curr = lock.lock().unwrap();
+    loop {
+        curr = cond.wait(curr).unwrap();
+        if prev != *curr {
+            loop {
+                let settle_check = cond
+                    .wait_timeout(curr, Duration::from_secs_f32(config.settle))
+                    .unwrap();
+                curr = settle_check.0;
+                if settle_check.1.timed_out() {
+                    log::debug!("Filesystem settled");
+                    break; // filesystem has settled
+                }
+            }
+
+            run_command(&config)?;
+        }
+        prev = *curr;
+
+        if config.oneshot {
+            break;
+        }
     }
 
     Ok(())
