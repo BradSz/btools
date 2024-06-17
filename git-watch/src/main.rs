@@ -6,7 +6,7 @@ use std::{
     ffi::OsStr,
     io::Write,
     path::PathBuf,
-    sync::{Arc, Condvar, Mutex, MutexGuard, WaitTimeoutResult},
+    sync::{Arc, Condvar, Mutex},
     time::{Duration, Instant},
 };
 
@@ -200,12 +200,8 @@ fn main() -> Result<()> {
         let mut monitored: bool = false;
 
         if let Ok(event) = result {
-            if let EventKind::Access(access) = event.kind {
-                if let AccessKind::Close(mode) = access {
-                    if let AccessMode::Write = mode {
-                        monitored = true;
-                    }
-                }
+            if let EventKind::Access(AccessKind::Close(AccessMode::Write)) = event.kind {
+                monitored = true;
             }
 
             if monitored {
